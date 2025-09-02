@@ -1,132 +1,280 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useAuth } from '@/contexts/AuthContext'
-import { useLoans, useEquipment, useUsers } from '@/hooks/useSupabase'
-import Layout from '@/components/layout/Layout'
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
-import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import {
-  PlusIcon,
-  MagnifyingGlassIcon,
-  ArrowPathIcon,
-  ExclamationTriangleIcon
-} from '@heroicons/react/24/outline'
-import { formatDate, getStatusColor, getStatusText, isOverdue } from '@/lib/utils'
-import toast from 'react-hot-toast'
+import Layout from '@/components/layout/Layout'
+import { useAuth } from '@/contexts/AuthContext'
+import { MagnifyingGlassIcon, PlusIcon, ArrowPathIcon, MinusIcon, UserIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
-interface LoanWithDetails {
+interface Loan {
   id: string
-  usuario_id: string
+  user_id: string
   equipo_id: string
   fecha_prestamo: string
   fecha_devolucion_esperada: string
   fecha_devolucion_real?: string
-  estado: 'activo' | 'devuelto' | 'vencido'
+  status: 'activo' | 'devuelto' | 'vencido'
   observaciones?: string
-  equipos: {
-    id: string
-    nombre: string
-    modelo: string
-    numero_serie: string
-  }
-  profiles: {
+  profiles?: {
     id: string
     nombre: string
     apellido: string
     numero_estudiante: string
+    email: string
   }
+  equipos?: {
+    id: string
+    nombre: string
+    modelo: string
+    numero_serie: string
+    estado: string
+  }
+}
+
+interface User {
+  id: string
+  nombre: string
+  apellido: string
+  matricula: string
+  email: string
+}
+
+interface Equipment {
+  id: string
+  nombre: string
+  modelo: string
+  numero_serie: string
+  estado: string
 }
 
 export default function PrestamosPage() {
   const { profile } = useAuth()
-  const { loans, loading: loansLoading, createLoan, updateLoan } = useLoans()
-  const { equipment, loading: equipmentLoading } = useEquipment()
-  const { users, loading: usersLoading } = useUsers()
-  
+  const [loans, setLoans] = useState<Loan[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [equipment, setEquipment] = useState<Equipment[]>([])
+  const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'activo' | 'devuelto' | 'vencido'>('all')
   const [showNewLoanModal, setShowNewLoanModal] = useState(false)
-  const [selectedLoan, setSelectedLoan] = useState<LoanWithDetails | null>(null)
+  const [selectedUserId, setSelectedUserId] = useState('')
+  const [selectedEquipmentId, setSelectedEquipmentId] = useState('')
+  const [expectedReturnDate, setExpectedReturnDate] = useState('')
+  const [observations, setObservations] = useState('')
   
-  // New loan form state
-  const [newLoan, setNewLoan] = useState({
-    usuario_id: '',
-    equipo_id: '',
-    fecha_devolucion_esperada: '',
-    observaciones: ''
+  // New states for user search and dynamic view
+  const [userSearchTerm, setUserSearchTerm] = useState('')
+  const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [showUserView, setShowUserView] = useState(false)
+  const [equipmentSearchTerm, setEquipmentSearchTerm] = useState('')
+  const [showEquipmentSearch, setShowEquipmentSearch] = useState(false)
+
+  const supabase = createClientComponentClient()
+
+  useEffect(() => {
+    fetchLoans()
+    fetchUsers()
+    fetchEquipment()
+  }, [])
+
+  const fetchLoans = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('prestamos')
+        .select(`
+          *,
+          profiles (id, nombre, apellido, matricula, email),
+          equipos (id, nombre, modelo, serie, cantidad_disponible)
+        `)
+        .order('fecha_prestamo', { ascending: false })
+
+      if (error) throw error
+      setLoans(data || [])
+    } catch (error) {
+      console.error('Error fetching loans:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const fetchUsers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('nombre')
+
+      if (error) throw error
+      setUsers(data || [])
+    } catch (error) {
+      console.error('Error fetching users:', error)
+    }
+  }
+
+  const fetchEquipment = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('equipos')
+        .select('*')
+        .gt('cantidad_disponible', 0)
+        .eq('is_active', true)
+        .order('nombre')
+
+      if (error) throw error
+      setEquipment(data || [])
+    } catch (error) {
+      console.error('Error fetching equipment:', error)
+    }
+  }
+
+  // Filter functions
+  const filteredUsers = users.filter(user => {
+    if (!userSearchTerm) return false
+    const searchLower = userSearchTerm.toLowerCase()
+    return (
+      user.nombre.toLowerCase().includes(searchLower) ||
+      user.apellido.toLowerCase().includes(searchLower) ||
+      (user.matricula || '').toLowerCase().includes(searchLower) ||
+      user.email.toLowerCase().includes(searchLower)
+    )
   })
 
-  const loading = loansLoading || equipmentLoading || (profile?.role === 'admin' && usersLoading)
+  const userLoans = selectedUser ? loans.filter(loan => loan.user_id === selectedUser.id) : []
 
-  // Filter loans based on search and status
-  const filteredLoans = (loans as LoanWithDetails[] || []).filter(loan => {
-    const matchesSearch = 
+  const filteredEquipment = equipment.filter(equip => {
+    if (!equipmentSearchTerm) return equipment.slice(0, 5)
+    const searchLower = equipmentSearchTerm.toLowerCase()
+    return (
+      equip.nombre.toLowerCase().includes(searchLower) ||
+      equip.modelo.toLowerCase().includes(searchLower) ||
+      equip.serie.toLowerCase().includes(searchLower)
+    )
+  })
+
+  const filteredLoans = loans.filter(loan => {
+    const matchesSearch = !searchTerm || 
       loan.equipos?.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
       loan.profiles?.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
       loan.profiles?.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.profiles?.numero_estudiante.includes(searchTerm)
+      loan.profiles?.matricula?.includes(searchTerm)
     
-    const matchesStatus = statusFilter === 'all' || loan.estado === statusFilter
+    const matchesStatus = statusFilter === 'all' || loan.status === statusFilter
     
     return matchesSearch && matchesStatus
   })
 
-  // Available equipment for new loans
-  const availableEquipment = equipment?.filter(eq => eq.estado === 'disponible') || []
-  
-  // Available users for new loans (admin only)
-  const availableUsers = users?.filter(user => user.activo) || []
+  // Handler functions
+  const handleSelectUser = (user: User) => {
+    setSelectedUser(user)
+    setShowUserView(true)
+    setUserSearchTerm('')
+  }
 
-  const handleCreateLoan = async () => {
-    if (!newLoan.usuario_id || !newLoan.equipo_id || !newLoan.fecha_devolucion_esperada) {
-      toast.error('Por favor completa todos los campos requeridos')
-      return
-    }
-
+  const handleCreateLoanFromUser = async (equipmentId: string) => {
+    if (!selectedUser) return
+    
+    const returnDate = new Date()
+    returnDate.setDate(returnDate.getDate() + 7)
+    
     try {
-      await createLoan({
-        usuario_id: newLoan.usuario_id,
-        equipo_id: newLoan.equipo_id,
-        fecha_devolucion_esperada: newLoan.fecha_devolucion_esperada,
-        observaciones: newLoan.observaciones || null
+      const { error } = await supabase
+      .from('prestamos')
+      .insert({
+        user_id: selectedUser.id,
+        equipo_id: equipmentId,
+        fecha_devolucion_esperada: returnDate.toISOString(),
+        observaciones: 'Préstamo creado desde vista de usuario'
       })
+
+      if (error) throw error
       
-      setShowNewLoanModal(false)
-      setNewLoan({
-        usuario_id: '',
-        equipo_id: '',
-        fecha_devolucion_esperada: '',
-        observaciones: ''
-      })
-      toast.success('Préstamo creado exitosamente')
+      await supabase
+        .from('equipos')
+        .update({ estado: 'prestado' })
+        .eq('id', equipmentId)
+
+      fetchLoans()
+      fetchEquipment()
+      setShowEquipmentSearch(false)
+      setEquipmentSearchTerm('')
     } catch (error) {
       console.error('Error creating loan:', error)
-      toast.error('Error al crear el préstamo')
     }
   }
 
   const handleReturnLoan = async (loanId: string) => {
+    await returnLoan(loanId)
+  }
+
+  const returnLoan = async (loanId: string) => {
     try {
-      await updateLoan(loanId, {
-        estado: 'devuelto',
-        fecha_devolucion_real: new Date().toISOString()
-      })
-      toast.success('Equipo devuelto exitosamente')
+      const loan = loans.find(l => l.id === loanId)
+      if (!loan) return
+
+      const { error } = await supabase
+        .from('prestamos')
+        .update({
+          fecha_devolucion_real: new Date().toISOString(),
+          status: 'devuelto'
+        })
+        .eq('id', loanId)
+
+      if (error) throw error
+
+      await supabase
+        .from('equipos')
+        .update({ estado: 'disponible' })
+        .eq('id', loan.equipo_id)
+
+      fetchLoans()
+      fetchEquipment()
     } catch (error) {
       console.error('Error returning loan:', error)
-      toast.error('Error al devolver el equipo')
     }
+  }
+
+  const handleCreateLoan = async () => {
+    try {
+      const { error } = await supabase
+      .from('prestamos')
+      .insert({
+        user_id: selectedUserId,
+        equipo_id: selectedEquipmentId,
+        fecha_devolucion_esperada: expectedReturnDate,
+        observaciones: observations
+      })
+
+      if (error) throw error
+
+      await supabase
+        .from('equipos')
+        .update({ estado: 'prestado' })
+        .eq('id', selectedEquipmentId)
+
+      fetchLoans()
+      fetchEquipment()
+      setShowNewLoanModal(false)
+      setSelectedUserId('')
+      setSelectedEquipmentId('')
+      setExpectedReturnDate('')
+      setObservations('')
+    } catch (error) {
+      console.error('Error creating loan:', error)
+    }
+  }
+
+  const isOverdue = (expectedDate: string) => {
+    return new Date(expectedDate) < new Date()
   }
 
   if (loading) {
     return (
       <Layout>
-        <div className="flex items-center justify-center h-64">
-          <LoadingSpinner size="lg" />
+        <div className="flex justify-center items-center h-64">
+          <div className="text-lg">Cargando préstamos...</div>
         </div>
       </Layout>
     )
@@ -139,132 +287,309 @@ export default function PrestamosPage() {
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Gestión de Préstamos</h1>
-            <p className="text-gray-600">Administra los préstamos de equipos</p>
+            <p className="text-gray-600">
+              {showUserView && selectedUser 
+                ? `Vista de usuario: ${selectedUser.nombre} ${selectedUser.apellido}`
+                : 'Administra los préstamos de equipos'
+              }
+            </p>
           </div>
           
           {(profile?.role === 'admin' || profile?.role === 'becario') && (
-            <Button onClick={() => setShowNewLoanModal(true)}>
-              <PlusIcon className="h-4 w-4 mr-2" />
-              Nuevo Préstamo
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={() => setShowNewLoanModal(true)} variant="outline">
+                <PlusIcon className="h-4 w-4 mr-2" />
+                Nuevo Préstamo
+              </Button>
+              {showUserView && (
+                <Button onClick={() => { setShowUserView(false); setSelectedUser(null) }} variant="outline">
+                  Ver Todos
+                </Button>
+              )}
+            </div>
           )}
         </div>
 
-        {/* Filters */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1">
-                <div className="relative">
-                  <MagnifyingGlassIcon className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                  <Input
-                    placeholder="Buscar por equipo, usuario o número de estudiante..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
+        {/* User Search */}
+        {!showUserView && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="relative">
+                <MagnifyingGlassIcon className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <Input
+                  placeholder="Buscar usuario por nombre, matrícula o correo..."
+                  value={userSearchTerm}
+                  onChange={(e) => setUserSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
+                
+                {/* User Search Results */}
+                {userSearchTerm && filteredUsers.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-10 max-h-60 overflow-y-auto mt-1">
+                    {filteredUsers.map((user) => (
+                      <div
+                        key={user.id}
+                        onClick={() => handleSelectUser(user)}
+                        className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                      >
+                        <div className="flex items-center space-x-3">
+                          <UserIcon className="h-5 w-5 text-gray-400" />
+                          <div>
+                            <p className="font-medium text-gray-900">
+                              {user.nombre} {user.apellido}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              {user.matricula} • {user.email}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">Todos los estados</option>
-                <option value="activo">Activos</option>
-                <option value="devuelto">Devueltos</option>
-                <option value="vencido">Vencidos</option>
-              </select>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Loans List */}
-        <div className="space-y-4">
-          {filteredLoans.length === 0 ? (
+        {/* Filters for Loans List */}
+        {!showUserView && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                  <div className="relative">
+                    <MagnifyingGlassIcon className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                    <Input
+                      placeholder="Buscar por equipo, usuario o número de estudiante..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                </div>
+                
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Todos los estados</option>
+                  <option value="activo">Activos</option>
+                  <option value="devuelto">Devueltos</option>
+                  <option value="vencido">Vencidos</option>
+                </select>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* User Dynamic View */}
+        {showUserView && selectedUser && (
+          <div className="space-y-6">
+            {/* User Info Card */}
             <Card>
-              <CardContent className="text-center py-8">
-                <p className="text-gray-500">No se encontraron préstamos</p>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span>Información del Usuario</span>
+                  <Button
+                    onClick={() => setShowEquipmentSearch(!showEquipmentSearch)}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <PlusIcon className="h-4 w-4 mr-2" />
+                    Agregar Equipo
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-500">Nombre</p>
+                    <p className="font-medium">{selectedUser.nombre} {selectedUser.apellido}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Número de Estudiante</p>
+                    <p className="font-medium">{selectedUser.matricula}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Email</p>
+                    <p className="font-medium">{selectedUser.email}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Préstamos Activos</p>
+                    <p className="font-medium">{userLoans.filter(l => l.status === 'activo').length}</p>
+                  </div>
+                </div>
+                
+                {/* Equipment Search for New Loans */}
+                {showEquipmentSearch && (
+                  <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                    <div className="relative mb-3">
+                      <MagnifyingGlassIcon className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                      <Input
+                        placeholder="Buscar equipo por nombre, modelo o serie..."
+                        value={equipmentSearchTerm}
+                        onChange={(e) => setEquipmentSearchTerm(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                    
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {filteredEquipment.map((equip) => (
+                        <div
+                          key={equip.id}
+                          className="flex items-center justify-between p-2 bg-white rounded border hover:bg-gray-50"
+                        >
+                          <div>
+                            <p className="font-medium">{equip.nombre}</p>
+                            <p className="text-sm text-gray-500">{equip.modelo} - {equip.numero_serie}</p>
+                          </div>
+                          <Button
+                            onClick={() => handleCreateLoanFromUser(equip.id)}
+                            size="sm"
+                            variant="outline"
+                          >
+                            Prestar
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
-          ) : (
-            filteredLoans.map((loan) => {
-              const overdue = loan.estado === 'activo' && isOverdue(loan.fecha_devolucion_esperada)
-              
-              return (
-                <Card key={loan.id} className={overdue ? 'border-red-200 bg-red-50' : ''}>
-                  <CardContent className="pt-6">
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h3 className="font-semibold text-lg">{loan.equipos?.nombre}</h3>
-                            <p className="text-gray-600">
-                              {loan.equipos?.modelo} - S/N: {loan.equipos?.numero_serie}
-                            </p>
-                          </div>
-                          
-                          <div className="flex items-center space-x-2">
-                            <Badge variant={getStatusColor(loan.estado) as any}>
-                              {getStatusText(loan.estado)}
-                            </Badge>
-                            {overdue && (
-                              <Badge variant="destructive">
-                                <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
-                                Vencido
+            
+            {/* User's Loans */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Préstamos del Usuario</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {userLoans.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">No tiene préstamos registrados</p>
+                ) : (
+                  <div className="space-y-3">
+                    {userLoans.map((loan) => {
+                      const overdue = loan.status === 'activo' && isOverdue(loan.fecha_devolucion_esperada)
+                      
+                      return (
+                        <div key={loan.id} className={`p-4 border rounded-lg ${overdue ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h4 className="font-medium">{loan.equipos?.nombre}</h4>
+                              <p className="text-sm text-gray-500">{loan.equipos?.modelo} - {loan.equipos?.numero_serie}</p>
+                              <p className="text-sm text-gray-500">Prestado: {new Date(loan.fecha_prestamo).toLocaleDateString()}</p>
+                              <p className="text-sm text-gray-500">Retorno esperado: {new Date(loan.fecha_devolucion_esperada).toLocaleDateString()}</p>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Badge variant={loan.status === 'activo' ? (overdue ? 'destructive' : 'default') : 'secondary'}>
+                                {loan.status === 'activo' ? (overdue ? 'Vencido' : 'Activo') : 'Devuelto'}
                               </Badge>
-                            )}
+                              {loan.status === 'activo' && (profile?.role === 'admin' || profile?.role === 'becario') && (
+                                <Button
+                                  onClick={() => handleReturnLoan(loan.id)}
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-green-600 hover:text-green-700"
+                                >
+                                  <ArrowPathIcon className="h-4 w-4 mr-1" />
+                                  Devolver
+                                </Button>
+                              )}
+                            </div>
                           </div>
                         </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
-                          <div>
-                            <p><strong>Usuario:</strong> {loan.profiles?.nombre} {loan.profiles?.apellido}</p>
-                            <p><strong>No. Estudiante:</strong> {loan.profiles?.numero_estudiante}</p>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Loans List */}
+        {!showUserView && (
+          <div className="space-y-4">
+            {filteredLoans.length === 0 ? (
+              <Card>
+                <CardContent className="text-center py-8">
+                  <p className="text-gray-500">No se encontraron préstamos</p>
+                </CardContent>
+              </Card>
+            ) : (
+              filteredLoans.map((loan) => {
+                const overdue = loan.status === 'activo' && isOverdue(loan.fecha_devolucion_esperada)
+                
+                return (
+                  <Card key={loan.id} className={overdue ? 'border-red-200 bg-red-50' : ''}>
+                    <CardContent className="pt-6">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <h3 className="font-semibold text-lg">{loan.equipos?.nombre}</h3>
+                              <p className="text-gray-600">
+                                {loan.equipos?.modelo} - S/N: {loan.equipos?.numero_serie}
+                              </p>
+                            </div>
+                            <Badge variant={loan.status === 'activo' ? (overdue ? 'destructive' : 'default') : 'secondary'}>
+                              {loan.status === 'activo' ? (overdue ? 'Vencido' : 'Activo') : 'Devuelto'}
+                            </Badge>
                           </div>
                           
-                          <div>
-                            <p><strong>Fecha préstamo:</strong> {formatDate(loan.fecha_prestamo)}</p>
-                            <p><strong>Fecha esperada:</strong> {formatDate(loan.fecha_devolucion_esperada)}</p>
-                            {loan.fecha_devolucion_real && (
-                              <p><strong>Fecha devolución:</strong> {formatDate(loan.fecha_devolucion_real)}</p>
-                            )}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <p className="text-gray-500">Usuario:</p>
+                              <p className="font-medium">
+                                {loan.profiles?.nombre} {loan.profiles?.apellido}
+                              </p>
+                              <p className="text-gray-500">{loan.profiles?.matricula}</p>
+                            </div>
+                            
+                            <div>
+                              <p className="text-gray-500">Fechas:</p>
+                              <p>Prestado: {new Date(loan.fecha_prestamo).toLocaleDateString()}</p>
+                              <p>Retorno esperado: {new Date(loan.fecha_devolucion_esperada).toLocaleDateString()}</p>
+                              {loan.fecha_devolucion_real && (
+                                <p>Devuelto: {new Date(loan.fecha_devolucion_real).toLocaleDateString()}</p>
+                              )}
+                            </div>
                           </div>
+                          
+                          {loan.observaciones && (
+                            <div className="mt-2">
+                              <p className="text-gray-500 text-sm">Observaciones:</p>
+                              <p className="text-sm">{loan.observaciones}</p>
+                            </div>
+                          )}
                         </div>
                         
-                        {loan.observaciones && (
-                          <div className="mt-2">
-                            <p className="text-sm text-gray-600">
-                              <strong>Observaciones:</strong> {loan.observaciones}
-                            </p>
+                        {loan.status === 'activo' && (profile?.role === 'admin' || profile?.role === 'becario') && (
+                          <div className="flex space-x-2">
+                            <Button
+                              variant="outline"
+                              onClick={() => handleReturnLoan(loan.id)}
+                              className="text-green-600 hover:text-green-700"
+                            >
+                              <ArrowPathIcon className="h-4 w-4 mr-2" />
+                              Devolver
+                            </Button>
                           </div>
                         )}
                       </div>
-                      
-                      {loan.estado === 'activo' && (profile?.role === 'admin' || profile?.role === 'becario') && (
-                        <div className="flex space-x-2">
-                          <Button
-                            variant="outline"
-                            onClick={() => handleReturnLoan(loan.id)}
-                            className="text-green-600 hover:text-green-700"
-                          >
-                            <ArrowPathIcon className="h-4 w-4 mr-2" />
-                            Devolver
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })
-          )}
-        </div>
+                    </CardContent>
+                  </Card>
+                )
+              })
+            )}
+          </div>
+        )}
 
         {/* New Loan Modal */}
         {showNewLoanModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
             <Card className="w-full max-w-md">
               <CardHeader>
                 <CardTitle>Nuevo Préstamo</CardTitle>
@@ -273,59 +598,58 @@ export default function PrestamosPage() {
                 {/* User Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Usuario *
+                    Usuario
                   </label>
-                  <select
-                    value={newLoan.usuario_id}
-                    onChange={(e) => setNewLoan({ ...newLoan, usuario_id: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  >
-                    <option value="">Seleccionar usuario</option>
-                    {profile?.role === 'normal' ? (
-                      <option value={profile.id}>
-                        {profile.nombre} {profile.apellido} - {profile.numero_estudiante}
-                      </option>
-                    ) : (
-                      availableUsers.map((user) => (
+                  {profile?.role === 'normal' ? (
+                    <p className="text-sm text-gray-600">
+                      {profile.nombre} {profile.apellido}
+                    </p>
+                  ) : (
+                    <select
+                      value={selectedUserId}
+                      onChange={(e) => setSelectedUserId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    >
+                      <option value="">Seleccionar usuario</option>
+                      {users.map((user) => (
                         <option key={user.id} value={user.id}>
                           {user.nombre} {user.apellido} - {user.numero_estudiante}
                         </option>
-                      ))
-                    )}
-                  </select>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 {/* Equipment Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Equipo *
+                    Equipo
                   </label>
                   <select
-                    value={newLoan.equipo_id}
-                    onChange={(e) => setNewLoan({ ...newLoan, equipo_id: e.target.value })}
+                    value={selectedEquipmentId}
+                    onChange={(e) => setSelectedEquipmentId(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   >
                     <option value="">Seleccionar equipo</option>
-                    {availableEquipment.map((equipo) => (
-                      <option key={equipo.id} value={equipo.id}>
-                        {equipo.nombre} - {equipo.modelo} (S/N: {equipo.numero_serie})
+                    {equipment.map((equip) => (
+                      <option key={equip.id} value={equip.id}>
+                        {equip.nombre} - {equip.modelo} ({equip.numero_serie})
                       </option>
                     ))}
                   </select>
                 </div>
 
-                {/* Return Date */}
+                {/* Expected Return Date */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Fecha de devolución esperada *
+                    Fecha de devolución esperada
                   </label>
                   <Input
                     type="date"
-                    value={newLoan.fecha_devolucion_esperada}
-                    onChange={(e) => setNewLoan({ ...newLoan, fecha_devolucion_esperada: e.target.value })}
-                    min={new Date().toISOString().split('T')[0]}
+                    value={expectedReturnDate}
+                    onChange={(e) => setExpectedReturnDate(e.target.value)}
                     required
                   />
                 </div>
@@ -336,15 +660,15 @@ export default function PrestamosPage() {
                     Observaciones
                   </label>
                   <textarea
-                    value={newLoan.observaciones}
-                    onChange={(e) => setNewLoan({ ...newLoan, observaciones: e.target.value })}
+                    value={observations}
+                    onChange={(e) => setObservations(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     rows={3}
                     placeholder="Observaciones adicionales..."
                   />
                 </div>
 
-                {/* Actions */}
+                {/* Modal Actions */}
                 <div className="flex space-x-2 pt-4">
                   <Button
                     variant="outline"

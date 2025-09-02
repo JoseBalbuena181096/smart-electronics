@@ -16,7 +16,7 @@ import {
   TrashIcon,
   EyeIcon
 } from '@heroicons/react/24/outline'
-import { getStatusColor, getStatusText } from '@/lib/utils'
+
 import toast from 'react-hot-toast'
 
 interface Equipment {
@@ -25,22 +25,23 @@ interface Equipment {
   descripcion?: string
   modelo: string
   marca: string
-  numero_serie: string
+  serie: string
   ubicacion: string
-  estado: 'disponible' | 'prestado' | 'mantenimiento' | 'fuera_servicio'
-  observaciones?: string
+  cantidad_total: number
+  cantidad_disponible: number
+  is_active: boolean
   created_at: string
+  updated_at: string
 }
 
-interface EquipmentFormData {
+interface FormData {
   nombre: string
   descripcion: string
   modelo: string
   marca: string
   numero_serie: string
   ubicacion: string
-  estado: 'disponible' | 'prestado' | 'mantenimiento' | 'fuera_servicio'
-  observaciones: string
+  cantidad_total: number
 }
 
 export default function EquiposPage() {
@@ -48,32 +49,33 @@ export default function EquiposPage() {
   const { equipment, loading, createEquipment, updateEquipment, deleteEquipment } = useEquipment()
   
   const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'disponible' | 'prestado' | 'mantenimiento' | 'fuera_servicio'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'disponible' | 'prestado'>('all')
   const [showModal, setShowModal] = useState(false)
   const [modalMode, setModalMode] = useState<'create' | 'edit' | 'view'>('create')
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null)
   
-  const [formData, setFormData] = useState<EquipmentFormData>({
+  const [formData, setFormData] = useState<FormData>({
     nombre: '',
     descripcion: '',
     modelo: '',
     marca: '',
     numero_serie: '',
     ubicacion: '',
-    estado: 'disponible',
-    observaciones: ''
+    cantidad_total: 1
   })
 
   // Filter equipment based on search and status
   const filteredEquipment = (equipment || []).filter(equipo => {
     const matchesSearch = 
       equipo.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      equipo.modelo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      equipo.marca.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      equipo.numero_serie.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      equipo.ubicacion.toLowerCase().includes(searchTerm.toLowerCase())
+      (equipo.modelo?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (equipo.marca?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      equipo.serie.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (equipo.ubicacion?.toLowerCase() || '').includes(searchTerm.toLowerCase())
     
-    const matchesStatus = statusFilter === 'all' || equipo.estado === statusFilter
+    const matchesStatus = statusFilter === 'all' || 
+      (statusFilter === 'disponible' && equipo.cantidad_disponible > 0) ||
+      (statusFilter === 'prestado' && equipo.cantidad_disponible < equipo.cantidad_total)
     
     return matchesSearch && matchesStatus
   })
@@ -86,8 +88,7 @@ export default function EquiposPage() {
       marca: '',
       numero_serie: '',
       ubicacion: '',
-      estado: 'disponible',
-      observaciones: ''
+      cantidad_total: 1
     })
   }
 
@@ -97,15 +98,14 @@ export default function EquiposPage() {
     
     if (equipo && (mode === 'edit' || mode === 'view')) {
       setFormData({
-        nombre: equipo.nombre,
-        descripcion: equipo.descripcion || '',
-        modelo: equipo.modelo,
-        marca: equipo.marca,
-        numero_serie: equipo.numero_serie,
-        ubicacion: equipo.ubicacion,
-        estado: equipo.estado,
-        observaciones: equipo.observaciones || ''
-      })
+          nombre: equipo.nombre,
+          descripcion: equipo.descripcion || '',
+          modelo: equipo.modelo || '',
+          marca: equipo.marca || '',
+          numero_serie: equipo.serie,
+          ubicacion: equipo.ubicacion || '',
+          cantidad_total: equipo.cantidad_total
+        })
     } else {
       resetForm()
     }
@@ -129,26 +129,24 @@ export default function EquiposPage() {
       if (modalMode === 'create') {
         await createEquipment({
           nombre: formData.nombre,
-          descripcion: formData.descripcion || null,
+          descripcion: formData.descripcion || undefined,
           modelo: formData.modelo,
           marca: formData.marca,
-          numero_serie: formData.numero_serie,
+          serie: formData.numero_serie,
           ubicacion: formData.ubicacion,
-          estado: formData.estado,
-          observaciones: formData.observaciones || null
+          cantidad_total: formData.cantidad_total,
+          cantidad_disponible: formData.cantidad_total
         })
-        toast.success('Equipo creado exitosamente')
       } else if (modalMode === 'edit' && selectedEquipment) {
-        await updateEquipment(selectedEquipment.id, {
-          nombre: formData.nombre,
-          descripcion: formData.descripcion || null,
-          modelo: formData.modelo,
-          marca: formData.marca,
-          numero_serie: formData.numero_serie,
-          ubicacion: formData.ubicacion,
-          estado: formData.estado,
-          observaciones: formData.observaciones || null
-        })
+          await updateEquipment(selectedEquipment.id, {
+             nombre: formData.nombre,
+             descripcion: formData.descripcion || undefined,
+             modelo: formData.modelo,
+             marca: formData.marca,
+             serie: formData.numero_serie,
+             ubicacion: formData.ubicacion,
+             cantidad_total: formData.cantidad_total
+           })
         toast.success('Equipo actualizado exitosamente')
       }
       
@@ -222,13 +220,11 @@ export default function EquiposPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900"
               >
                 <option value="all">Todos los estados</option>
                 <option value="disponible">Disponible</option>
-                <option value="prestado">Prestado</option>
-                <option value="mantenimiento">Mantenimiento</option>
-                <option value="fuera_servicio">Fuera de servicio</option>
+                <option value="prestado">En préstamo</option>
               </select>
             </div>
           </CardContent>
@@ -250,29 +246,24 @@ export default function EquiposPage() {
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-start">
                     <CardTitle className="text-lg">{equipo.nombre}</CardTitle>
-                    <Badge variant={getStatusColor(equipo.estado) as any}>
-                      {getStatusText(equipo.estado)}
-                    </Badge>
+                    <Badge variant={equipo.cantidad_disponible > 0 ? 'default' : 'secondary'}>
+                          {equipo.cantidad_disponible > 0 ? 'Disponible' : 'En préstamo'}
+                        </Badge>
                   </div>
                 </CardHeader>
                 
                 <CardContent className="space-y-3">
                   <div className="text-sm text-gray-600 space-y-1">
-                    <p><strong>Modelo:</strong> {equipo.modelo}</p>
-                    <p><strong>Marca:</strong> {equipo.marca}</p>
-                    <p><strong>Serie:</strong> {equipo.numero_serie}</p>
-                    <p><strong>Ubicación:</strong> {equipo.ubicacion}</p>
+                    <p><strong>Modelo:</strong> {equipo.modelo || '-'}</p>
+                    <p><strong>Marca:</strong> {equipo.marca || '-'}</p>
+                    <p><strong>Serie:</strong> {equipo.serie}</p>
+                    <p><strong>Ubicación:</strong> {equipo.ubicacion || '-'}</p>
+                    <p><strong>Disponible:</strong> {equipo.cantidad_disponible}/{equipo.cantidad_total}</p>
                   </div>
                   
                   {equipo.descripcion && (
                     <p className="text-sm text-gray-600">
                       <strong>Descripción:</strong> {equipo.descripcion}
-                    </p>
-                  )}
-                  
-                  {equipo.observaciones && (
-                    <p className="text-sm text-gray-600">
-                      <strong>Observaciones:</strong> {equipo.observaciones}
                     </p>
                   )}
                   
@@ -318,7 +309,7 @@ export default function EquiposPage() {
 
         {/* Equipment Modal */}
         {showModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
             <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
               <CardHeader>
                 <CardTitle>
@@ -395,23 +386,22 @@ export default function EquiposPage() {
                     />
                   </div>
 
-                  {/* Estado */}
+                  {/* Cantidad Total */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Estado
+                      Cantidad Total *
                     </label>
-                    <select
-                      value={formData.estado}
-                      onChange={(e) => setFormData({ ...formData, estado: e.target.value as any })}
+                    <Input
+                      type="number"
+                      min="1"
+                      value={formData.cantidad_total}
+                      onChange={(e) => setFormData({ ...formData, cantidad_total: parseInt(e.target.value) || 1 })}
                       disabled={modalMode === 'view'}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                    >
-                      <option value="disponible">Disponible</option>
-                      <option value="prestado">Prestado</option>
-                      <option value="mantenimiento">Mantenimiento</option>
-                      <option value="fuera_servicio">Fuera de servicio</option>
-                    </select>
+                      required
+                    />
                   </div>
+
+
                 </div>
 
                 {/* Descripción */}
@@ -423,26 +413,13 @@ export default function EquiposPage() {
                     value={formData.descripcion}
                     onChange={(e) => setFormData({ ...formData, descripcion: e.target.value })}
                     disabled={modalMode === 'view'}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 bg-white text-gray-900 placeholder-gray-500"
                     rows={3}
                     placeholder="Descripción del equipo..."
                   />
                 </div>
 
-                {/* Observaciones */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Observaciones
-                  </label>
-                  <textarea
-                    value={formData.observaciones}
-                    onChange={(e) => setFormData({ ...formData, observaciones: e.target.value })}
-                    disabled={modalMode === 'view'}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                    rows={3}
-                    placeholder="Observaciones adicionales..."
-                  />
-                </div>
+
 
                 {/* Actions */}
                 <div className="flex space-x-2 pt-4">

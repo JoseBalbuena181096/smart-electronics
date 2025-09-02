@@ -76,7 +76,7 @@ export default function UsuariosPage() {
       user.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.matricula.includes(searchTerm)
+      (user.matricula || '').includes(searchTerm)
     
     const matchesRole = roleFilter === 'all' || user.role === roleFilter
     const matchesStatus = statusFilter === 'all' || 
@@ -286,7 +286,7 @@ export default function UsuariosPage() {
 
         {/* User Modal */}
         {showModal && selectedUser && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
             <Card className="w-full max-w-md">
               <CardHeader>
                 <CardTitle>

@@ -61,40 +61,44 @@ export interface Database {
           id: string
           nombre: string
           descripcion?: string
-          numero_serie: string
-          marca?: string
-          modelo?: string
-          ubicacion?: string
+          serie: string
+          marca: string
+          modelo: string
+          ubicacion: string
           cantidad_total: number
           cantidad_disponible: number
-          estado: 'disponible' | 'mantenimiento' | 'fuera_servicio'
-          imagen_url?: string
+          estado?: 'disponible' | 'mantenimiento' | 'fuera_servicio'
+          is_active: boolean
           created_at: string
           updated_at: string
+          created_by?: string
         }
         Insert: {
           nombre: string
           descripcion?: string
-          numero_serie: string
-          marca?: string
-          modelo?: string
-          ubicacion?: string
+          serie: string
+          marca: string
+          modelo: string
+          ubicacion: string
           cantidad_total: number
           cantidad_disponible?: number
           estado?: 'disponible' | 'mantenimiento' | 'fuera_servicio'
-          imagen_url?: string
+          is_active?: boolean
+          created_by?: string
         }
         Update: {
+          id?: string
           nombre?: string
           descripcion?: string
-          numero_serie?: string
+          serie?: string
           marca?: string
           modelo?: string
           ubicacion?: string
           cantidad_total?: number
           cantidad_disponible?: number
           estado?: 'disponible' | 'mantenimiento' | 'fuera_servicio'
-          imagen_url?: string
+          is_active?: boolean
+          created_by?: string
         }
       }
       prestamos: {
