@@ -14,24 +14,30 @@ interface Loan {
   id: string
   user_id: string
   equipo_id: string
-  fecha_prestamo: string
-  fecha_devolucion_esperada: string
-  fecha_devolucion_real?: string
+  cantidad_prestada: number
+  cantidad_devuelta: number
+  cantidad_pendiente: number
   status: 'activo' | 'devuelto' | 'vencido'
-  observaciones?: string
+  fecha_prestamo: string
+  fecha_devolucion?: string
+  notas?: string
+  prestado_por: string
+  devuelto_por?: string
+  created_at: string
+  updated_at: string
   profiles?: {
     id: string
     nombre: string
     apellido: string
-    numero_estudiante: string
+    matricula: string
     email: string
   }
   equipos?: {
     id: string
     nombre: string
     modelo: string
-    numero_serie: string
-    estado: string
+    serie: string
+    cantidad_disponible: number
   }
 }
 
@@ -39,7 +45,7 @@ interface User {
   id: string
   nombre: string
   apellido: string
-  matricula: string
+  matricula: string | null
   email: string
 }
 
@@ -57,8 +63,7 @@ export default function PrestamosPage() {
   const [users, setUsers] = useState<User[]>([])
   const [equipment, setEquipment] = useState<Equipment[]>([])
   const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'activo' | 'devuelto' | 'vencido'>('all')
+
   const [showNewLoanModal, setShowNewLoanModal] = useState(false)
   const [selectedUserId, setSelectedUserId] = useState('')
   const [selectedEquipmentId, setSelectedEquipmentId] = useState('')
@@ -86,8 +91,8 @@ export default function PrestamosPage() {
         .from('prestamos')
         .select(`
           *,
-          profiles (id, nombre, apellido, matricula, email),
-          equipos (id, nombre, modelo, serie, cantidad_disponible)
+          profiles!user_id (id, nombre, apellido, matricula, email),
+          equipos!equipo_id (id, nombre, modelo, serie, cantidad_disponible)
         `)
         .order('fecha_prestamo', { ascending: false })
 
@@ -154,17 +159,7 @@ export default function PrestamosPage() {
     )
   })
 
-  const filteredLoans = loans.filter(loan => {
-    const matchesSearch = !searchTerm || 
-      loan.equipos?.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.profiles?.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.profiles?.apellido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.profiles?.matricula?.includes(searchTerm)
-    
-    const matchesStatus = statusFilter === 'all' || loan.status === statusFilter
-    
-    return matchesSearch && matchesStatus
-  })
+  const filteredLoans = loans
 
   // Handler functions
   const handleSelectUser = (user: User) => {
@@ -185,8 +180,9 @@ export default function PrestamosPage() {
       .insert({
         user_id: selectedUser.id,
         equipo_id: equipmentId,
-        fecha_devolucion_esperada: returnDate.toISOString(),
-        observaciones: 'Préstamo creado desde vista de usuario'
+        cantidad_prestada: 1,
+        notas: 'Préstamo creado desde vista de usuario',
+        prestado_por: profile?.id
       })
 
       if (error) throw error
@@ -243,8 +239,9 @@ export default function PrestamosPage() {
       .insert({
         user_id: selectedUserId,
         equipo_id: selectedEquipmentId,
-        fecha_devolucion_esperada: expectedReturnDate,
-        observaciones: observations
+        cantidad_prestada: 1,
+        notas: observations,
+        prestado_por: profile?.id
       })
 
       if (error) throw error
@@ -352,37 +349,7 @@ export default function PrestamosPage() {
           </Card>
         )}
 
-        {/* Filters for Loans List */}
-        {!showUserView && (
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <div className="relative">
-                    <MagnifyingGlassIcon className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                    <Input
-                      placeholder="Buscar por equipo, usuario o número de estudiante..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10"
-                    />
-                  </div>
-                </div>
-                
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as any)}
-                  className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">Todos los estados</option>
-                  <option value="activo">Activos</option>
-                  <option value="devuelto">Devueltos</option>
-                  <option value="vencido">Vencidos</option>
-                </select>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+
 
         {/* User Dynamic View */}
         {showUserView && selectedUser && (
@@ -471,16 +438,16 @@ export default function PrestamosPage() {
                 ) : (
                   <div className="space-y-3">
                     {userLoans.map((loan) => {
-                      const overdue = loan.status === 'activo' && isOverdue(loan.fecha_devolucion_esperada)
+                      const overdue = false // Removed overdue logic as fecha_devolucion_esperada doesn't exist
                       
                       return (
                         <div key={loan.id} className={`p-4 border rounded-lg ${overdue ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
                           <div className="flex items-center justify-between">
                             <div>
                               <h4 className="font-medium">{loan.equipos?.nombre}</h4>
-                              <p className="text-sm text-gray-500">{loan.equipos?.modelo} - {loan.equipos?.numero_serie}</p>
+                              <p className="text-sm text-gray-500">{loan.equipos?.modelo} - {loan.equipos?.serie}</p>
                               <p className="text-sm text-gray-500">Prestado: {new Date(loan.fecha_prestamo).toLocaleDateString()}</p>
-                              <p className="text-sm text-gray-500">Retorno esperado: {new Date(loan.fecha_devolucion_esperada).toLocaleDateString()}</p>
+                              <p className="text-sm text-gray-500">Cantidad: {loan.cantidad_prestada}</p>
                             </div>
                             <div className="flex items-center space-x-2">
                               <Badge variant={loan.status === 'activo' ? (overdue ? 'destructive' : 'default') : 'secondary'}>
@@ -520,7 +487,7 @@ export default function PrestamosPage() {
               </Card>
             ) : (
               filteredLoans.map((loan) => {
-                const overdue = loan.status === 'activo' && isOverdue(loan.fecha_devolucion_esperada)
+                const overdue = false // Removed overdue logic as fecha_devolucion_esperada doesn't exist
                 
                 return (
                   <Card key={loan.id} className={overdue ? 'border-red-200 bg-red-50' : ''}>
@@ -551,19 +518,19 @@ export default function PrestamosPage() {
                             <div>
                               <p className="text-gray-500">Fechas:</p>
                               <p>Prestado: {new Date(loan.fecha_prestamo).toLocaleDateString()}</p>
-                              <p>Retorno esperado: {new Date(loan.fecha_devolucion_esperada).toLocaleDateString()}</p>
-                              {loan.fecha_devolucion_real && (
-                                <p>Devuelto: {new Date(loan.fecha_devolucion_real).toLocaleDateString()}</p>
-                              )}
+                             <p>Cantidad prestada: {loan.cantidad_prestada}</p>
+                              {loan.fecha_devolucion && (
+                                 <p>Devuelto: {new Date(loan.fecha_devolucion).toLocaleDateString()}</p>
+                               )}
                             </div>
                           </div>
                           
-                          {loan.observaciones && (
-                            <div className="mt-2">
-                              <p className="text-gray-500 text-sm">Observaciones:</p>
-                              <p className="text-sm">{loan.observaciones}</p>
-                            </div>
-                          )}
+                          {loan.notas && (
+                               <div>
+                                 <p className="text-gray-500 text-sm">Notas:</p>
+                                 <p className="text-sm">{loan.notas}</p>
+                               </div>
+                             )}
                         </div>
                         
                         {loan.status === 'activo' && (profile?.role === 'admin' || profile?.role === 'becario') && (
@@ -657,7 +624,7 @@ export default function PrestamosPage() {
                 {/* Observations */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Observaciones
+                    Notas
                   </label>
                   <textarea
                     value={observations}
