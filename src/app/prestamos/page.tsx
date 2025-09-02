@@ -77,6 +77,7 @@ export default function PrestamosPage() {
   const [showUserView, setShowUserView] = useState(false)
   const [equipmentSearchTerm, setEquipmentSearchTerm] = useState('')
   const [showEquipmentSearch, setShowEquipmentSearch] = useState(false)
+  const [equipmentQuantities, setEquipmentQuantities] = useState<Record<string, {add: number, return: number}>>({})
 
   const supabase = createClientComponentClient()
 
@@ -149,6 +150,31 @@ export default function PrestamosPage() {
   })
 
   const userLoans = selectedUser ? loans.filter(loan => loan.user_id === selectedUser.id) : []
+  
+  // Agrupar préstamos por equipo para el usuario seleccionado
+  const groupedUserLoans = userLoans.reduce((acc, loan) => {
+    const equipoId = loan.equipo_id
+    if (!acc[equipoId]) {
+      acc[equipoId] = {
+        equipo: loan.equipos,
+        prestamos: [],
+        totalPrestado: 0,
+        totalDevuelto: 0,
+        totalPendiente: 0
+      }
+    }
+    acc[equipoId].prestamos.push(loan)
+    acc[equipoId].totalPrestado += loan.cantidad_prestada
+    acc[equipoId].totalDevuelto += loan.cantidad_devuelta || 0
+    acc[equipoId].totalPendiente += loan.cantidad_pendiente || (loan.cantidad_prestada - (loan.cantidad_devuelta || 0))
+    return acc
+  }, {} as Record<string, {
+    equipo: any,
+    prestamos: any[],
+    totalPrestado: number,
+    totalDevuelto: number,
+    totalPendiente: number
+  }>)
 
   const filteredEquipment = !equipmentSearchTerm 
     ? equipment.slice(0, 5) 
@@ -205,6 +231,78 @@ export default function PrestamosPage() {
 
   const handleReturnLoan = async (loanId: string) => {
     await returnLoan(loanId)
+  }
+
+  const handleAddMoreEquipment = async (equipoId: string, cantidad: number) => {
+    if (!selectedUser) return
+    
+    try {
+      const { error } = await supabase
+        .from('prestamos')
+        .insert({
+          user_id: selectedUser.id,
+          equipo_id: equipoId,
+          cantidad_prestada: cantidad,
+          notas: 'Préstamo adicional',
+          prestado_por: profile?.id
+        })
+
+      if (error) throw error
+      
+      await supabase
+        .from('equipos')
+        .update({ cantidad_disponible: equipment.find(e => e.id === equipoId)?.cantidad_disponible - cantidad })
+        .eq('id', equipoId)
+
+      fetchLoans()
+      fetchEquipment()
+    } catch (error) {
+      console.error('Error adding more equipment:', error)
+    }
+  }
+
+  const handlePartialReturn = async (equipoId: string, cantidadDevolver: number) => {
+    if (!selectedUser) return
+    
+    try {
+      // Buscar préstamos activos del equipo para este usuario
+      const prestamosActivos = userLoans.filter(loan => 
+        loan.equipo_id === equipoId && 
+        loan.status === 'activo' && 
+        (loan.cantidad_pendiente || (loan.cantidad_prestada - (loan.cantidad_devuelta || 0))) > 0
+      )
+      
+      let cantidadRestante = cantidadDevolver
+      
+      for (const prestamo of prestamosActivos) {
+        if (cantidadRestante <= 0) break
+        
+        const pendiente = prestamo.cantidad_pendiente || (prestamo.cantidad_prestada - (prestamo.cantidad_devuelta || 0))
+        const aDevolver = Math.min(cantidadRestante, pendiente)
+        
+        const { error } = await supabase
+          .from('prestamos')
+          .update({
+            cantidad_devuelta: (prestamo.cantidad_devuelta || 0) + aDevolver,
+            devuelto_por: profile?.id
+          })
+          .eq('id', prestamo.id)
+        
+        if (error) throw error
+        
+        cantidadRestante -= aDevolver
+      }
+      
+      await supabase
+        .from('equipos')
+        .update({ cantidad_disponible: equipment.find(e => e.id === equipoId)?.cantidad_disponible + cantidadDevolver })
+        .eq('id', equipoId)
+
+      fetchLoans()
+      fetchEquipment()
+    } catch (error) {
+      console.error('Error returning equipment:', error)
+    }
   }
 
   const returnLoan = async (loanId: string) => {
@@ -449,39 +547,132 @@ export default function PrestamosPage() {
                 <CardTitle>Préstamos del Usuario</CardTitle>
               </CardHeader>
               <CardContent>
-                {userLoans.length === 0 ? (
+                {Object.keys(groupedUserLoans).length === 0 ? (
                   <p className="text-gray-500 text-center py-4">No tiene préstamos registrados</p>
                 ) : (
-                  <div className="space-y-3">
-                    {userLoans.map((loan) => {
-                      const overdue = false // Removed overdue logic as fecha_devolucion_esperada doesn't exist
+                  <div className="space-y-4">
+                    {Object.entries(groupedUserLoans).map(([equipoId, grupo]) => {
+                      const quantities = equipmentQuantities[equipoId] || { add: 1, return: 1 }
+                      const hasActiveLoan = grupo.totalPendiente > 0
+                      
+                      const updateQuantity = (type: 'add' | 'return', value: number) => {
+                        setEquipmentQuantities(prev => ({
+                          ...prev,
+                          [equipoId]: {
+                            ...prev[equipoId],
+                            [type]: value
+                          }
+                        }))
+                      }
                       
                       return (
-                        <div key={loan.id} className={`p-4 border rounded-lg ${overdue ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h4 className="font-medium">{loan.equipos?.nombre}</h4>
-                              <p className="text-sm text-gray-500">{loan.equipos?.modelo} - {loan.equipos?.serie}</p>
-                              <p className="text-sm text-gray-500">Prestado: {new Date(loan.fecha_prestamo).toLocaleDateString()}</p>
-                              <p className="text-sm text-gray-500">Cantidad: {loan.cantidad_prestada}</p>
+                        <div key={equipoId} className="p-4 border rounded-lg border-gray-200 bg-white">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex-1">
+                              <h4 className="font-medium text-lg">{grupo.equipo?.nombre}</h4>
+                              <p className="text-sm text-gray-500">{grupo.equipo?.modelo} - {grupo.equipo?.serie}</p>
+                              <div className="mt-2 grid grid-cols-3 gap-4 text-sm">
+                                <div>
+                                  <p className="text-gray-500">Total Prestado:</p>
+                                  <p className="font-medium text-blue-600">{grupo.totalPrestado}</p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-500">Devuelto:</p>
+                                  <p className="font-medium text-green-600">{grupo.totalDevuelto}</p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-500">Pendiente:</p>
+                                  <p className="font-medium text-orange-600">{grupo.totalPendiente}</p>
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex items-center space-x-2">
-                              <Badge variant={loan.status === 'activo' ? (overdue ? 'destructive' : 'default') : 'secondary'}>
-                                {loan.status === 'activo' ? (overdue ? 'Vencido' : 'Activo') : 'Devuelto'}
-                              </Badge>
-                              {loan.status === 'activo' && (profile?.role === 'admin' || profile?.role === 'becario') && (
-                                <Button
-                                  onClick={() => handleReturnLoan(loan.id)}
-                                  variant="outline"
-                                  size="sm"
-                                  className="text-green-600 hover:text-green-700"
-                                >
-                                  <ArrowPathIcon className="h-4 w-4 mr-1" />
-                                  Devolver
-                                </Button>
-                              )}
-                            </div>
+                            <Badge variant={hasActiveLoan ? 'default' : 'secondary'}>
+                              {hasActiveLoan ? 'Activo' : 'Devuelto'}
+                            </Badge>
                           </div>
+                          
+                          {/* Controles de gestión */}
+                          {(profile?.role === 'admin' || profile?.role === 'becario') && (
+                            <div className="border-t pt-3 mt-3">
+                              <div className="flex flex-wrap gap-3">
+                                {/* Agregar más equipos */}
+                                <div className="flex items-center space-x-2">
+                                  <Input
+                                     type="number"
+                                     min="1"
+                                     max={grupo.equipo?.cantidad_disponible || 0}
+                                     value={quantities.add}
+                                     onChange={(e) => updateQuantity('add', parseInt(e.target.value) || 1)}
+                                     className="w-16 h-8"
+                                   />
+                                   <Button
+                                     onClick={() => handleAddMoreEquipment(equipoId, quantities.add)}
+                                     variant="outline"
+                                     size="sm"
+                                     className="text-blue-600 hover:text-blue-700"
+                                     disabled={!grupo.equipo?.cantidad_disponible || grupo.equipo.cantidad_disponible < quantities.add}
+                                   >
+                                    <PlusIcon className="h-4 w-4 mr-1" />
+                                    Prestar Más
+                                  </Button>
+                                </div>
+                                
+                                {/* Devolver parcialmente */}
+                                {hasActiveLoan && (
+                                  <div className="flex items-center space-x-2">
+                                    <Input
+                                       type="number"
+                                       min="1"
+                                       max={grupo.totalPendiente}
+                                       value={quantities.return}
+                                       onChange={(e) => updateQuantity('return', parseInt(e.target.value) || 1)}
+                                       className="w-16 h-8"
+                                     />
+                                     <Button
+                                       onClick={() => handlePartialReturn(equipoId, quantities.return)}
+                                       variant="outline"
+                                       size="sm"
+                                       className="text-green-600 hover:text-green-700"
+                                       disabled={quantities.return > grupo.totalPendiente}
+                                     >
+                                      <MinusIcon className="h-4 w-4 mr-1" />
+                                      Devolver
+                                    </Button>
+                                  </div>
+                                )}
+                                
+                                {/* Devolver todo */}
+                                {hasActiveLoan && (
+                                  <Button
+                                    onClick={() => handlePartialReturn(equipoId, grupo.totalPendiente)}
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-red-600 hover:text-red-700"
+                                  >
+                                    <ArrowPathIcon className="h-4 w-4 mr-1" />
+                                    Devolver Todo
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Detalles de préstamos individuales */}
+                          <details className="mt-3">
+                            <summary className="cursor-pointer text-sm text-gray-500 hover:text-gray-700">
+                              Ver detalles de préstamos ({grupo.prestamos.length})
+                            </summary>
+                            <div className="mt-2 space-y-2">
+                              {grupo.prestamos.map((loan) => (
+                                <div key={loan.id} className="text-xs bg-gray-50 p-2 rounded">
+                                  <p>Prestado: {new Date(loan.fecha_prestamo).toLocaleDateString()} - Cantidad: {loan.cantidad_prestada}</p>
+                                  {loan.cantidad_devuelta > 0 && (
+                                    <p>Devuelto: {loan.cantidad_devuelta} el {loan.fecha_devolucion ? new Date(loan.fecha_devolucion).toLocaleDateString() : 'N/A'}</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </details>
                         </div>
                       )
                     })}
