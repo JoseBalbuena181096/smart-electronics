@@ -53,8 +53,9 @@ interface Equipment {
   id: string
   nombre: string
   modelo: string
-  numero_serie: string
-  estado: string
+  serie: string
+  cantidad_disponible: number
+  is_active: boolean
 }
 
 export default function PrestamosPage() {
@@ -149,15 +150,16 @@ export default function PrestamosPage() {
 
   const userLoans = selectedUser ? loans.filter(loan => loan.user_id === selectedUser.id) : []
 
-  const filteredEquipment = equipment.filter(equip => {
-    if (!equipmentSearchTerm) return equipment.slice(0, 5)
-    const searchLower = equipmentSearchTerm.toLowerCase()
-    return (
-      equip.nombre.toLowerCase().includes(searchLower) ||
-      equip.modelo.toLowerCase().includes(searchLower) ||
-      equip.serie.toLowerCase().includes(searchLower)
-    )
-  })
+  const filteredEquipment = !equipmentSearchTerm 
+    ? equipment.slice(0, 5) 
+    : equipment.filter(equip => {
+        const searchLower = equipmentSearchTerm.toLowerCase()
+        return (
+          equip.nombre.toLowerCase().includes(searchLower) ||
+          equip.modelo.toLowerCase().includes(searchLower) ||
+          equip.serie.toLowerCase().includes(searchLower)
+        )
+      })
 
   const filteredLoans = loans
 
@@ -392,7 +394,7 @@ export default function PrestamosPage() {
                 {/* Equipment Search for New Loans */}
                 {showEquipmentSearch && (
                   <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                    <div className="relative mb-3">
+                    <div className="relative">
                       <MagnifyingGlassIcon className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                       <Input
                         placeholder="Buscar equipo por nombre, modelo o serie..."
@@ -400,27 +402,41 @@ export default function PrestamosPage() {
                         onChange={(e) => setEquipmentSearchTerm(e.target.value)}
                         className="pl-10"
                       />
-                    </div>
-                    
-                    <div className="space-y-2 max-h-40 overflow-y-auto">
-                      {filteredEquipment.map((equip) => (
-                        <div
-                          key={equip.id}
-                          className="flex items-center justify-between p-2 bg-white rounded border hover:bg-gray-50"
-                        >
-                          <div>
-                            <p className="font-medium">{equip.nombre}</p>
-                            <p className="text-sm text-gray-500">{equip.modelo} - {equip.numero_serie}</p>
-                          </div>
-                          <Button
-                            onClick={() => handleCreateLoanFromUser(equip.id)}
-                            size="sm"
-                            variant="outline"
-                          >
-                            Prestar
-                          </Button>
+                      
+                      {/* Equipment Search Results */}
+                      {equipmentSearchTerm && filteredEquipment.length > 0 && (
+                        <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-10 max-h-60 overflow-y-auto mt-1">
+                          {filteredEquipment.map((equip) => (
+                            <div
+                              key={equip.id}
+                              onClick={() => handleCreateLoanFromUser(equip.id)}
+                              className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3">
+                                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                                    <span className="text-blue-600 text-sm font-medium">{equip.nombre.charAt(0)}</span>
+                                  </div>
+                                  <div>
+                                    <p className="font-medium text-gray-900">{equip.nombre}</p>
+                                    <p className="text-sm text-gray-500">{equip.modelo} • {equip.serie}</p>
+                                    <p className="text-xs text-green-600">Disponible: {equip.cantidad_disponible}</p>
+                                  </div>
+                                </div>
+                                <div className="text-blue-600 hover:text-blue-800">
+                                  <PlusIcon className="h-5 w-5" />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
+                      
+                      {equipmentSearchTerm && filteredEquipment.length === 0 && (
+                        <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-10 mt-1 p-3">
+                          <p className="text-gray-500 text-center">No se encontraron equipos</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -498,7 +514,7 @@ export default function PrestamosPage() {
                             <div>
                               <h3 className="font-semibold text-lg">{loan.equipos?.nombre}</h3>
                               <p className="text-gray-600">
-                                {loan.equipos?.modelo} - S/N: {loan.equipos?.numero_serie}
+                                {loan.equipos?.modelo} - S/N: {loan.equipos?.serie}
                               </p>
                             </div>
                             <Badge variant={loan.status === 'activo' ? (overdue ? 'destructive' : 'default') : 'secondary'}>
@@ -602,7 +618,7 @@ export default function PrestamosPage() {
                     <option value="">Seleccionar equipo</option>
                     {equipment.map((equip) => (
                       <option key={equip.id} value={equip.id}>
-                        {equip.nombre} - {equip.modelo} ({equip.numero_serie})
+                        {equip.nombre} - {equip.modelo} ({equip.serie})
                       </option>
                     ))}
                   </select>
